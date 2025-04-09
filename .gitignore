@@ -1,0 +1,6 @@
+# Ignore Excel files
+*.xlsx
+
+# Ignore CSV files
+*.csv
+.venv
