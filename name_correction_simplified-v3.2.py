@@ -979,55 +979,35 @@ class EnhancedNameMatcher:
     
     def _standardize_company(self, company):
         """
-        Standardize a company name by converting to lowercase, removing punctuation,
-        applying company mapping, and removing common words like "Inc", "LLC", etc.
+        Standardize a company name by applying only the company mapping dictionary.
+        No other changes are made to the company name.
         
         Parameters:
         -----------
         company : str
             The company name to standardize
-            
+                
         Returns:
         --------
         str
             Standardized company name
         """
         # Check cache first
-        if company in company_standardization_cache:
-            return company_standardization_cache[company]
+        # if company in company_standardization_cache:
+        #     return company_standardization_cache[company]
         
         if not isinstance(company, str) or pd.isna(company) or company == "" or str(company).strip() == "":
             result = ""
         else:
-            # Convert to lowercase
-            result = str(company).lower()
+            # Convert to lowercase for matching purposes only
+            company_lower = str(company).lower().strip()
             
-            # Remove punctuation and extra spaces
-            result = re.sub(r'[^\w\s]', '', result)
-            result = re.sub(r'\s+', ' ', result).strip()
-            
-            # Apply company mapping
-            if result in COMPANY_MAP:
-                result = COMPANY_MAP[result]
-            
-            # Remove common company suffixes
-            common_suffixes = [
-                ' inc', ' llc', ' ltd', ' limited', ' corp', ' corporation',
-                ' company', ' co', ' group', ' holdings', ' advisors', ' advisers',
-                ' advisory', ' financial', ' services', ' investments', ' securities',
-                ' management', ' asset', ' capital', ' partners', ' associates',
-                ' consulting', ' solutions', ' international', ' national', ' global'
-            ]
-            
-            for suffix in common_suffixes:
-                if result.endswith(suffix):
-                    result = result[:-len(suffix)]
-            
-            # Remove common abbreviations
-            result = re.sub(r'\b(inc|llc|ltd|co|corp)\b', '', result)
-            
-            # Clean up extra spaces
-            result = re.sub(r'\s+', ' ', result).strip()
+            # Apply company mapping if it exists in the map
+            if company_lower in COMPANY_MAP:
+                result = COMPANY_MAP[company_lower]
+            else:
+                # If not in mapping, keep original
+                result = str(company).strip()
         
         # Cache the result
         company_standardization_cache[company] = result
@@ -1636,6 +1616,16 @@ class EnhancedNameMatcher:
         dict
             Dictionary containing match results
         """
+        # Skip matching if company is empty or None
+        if not company or pd.isna(company) or str(company).strip() == "":
+            return {
+                'input_first_name': first_name,
+                'input_last_name': last_name,
+                'input_company': company,
+                'best_match': None,
+                'confidence': 'no_match',  # Using 'no_match' to indicate we're preserving original
+                'top_candidates': []
+            }
         # First check for exact matches
         exact_match_found, exact_match_idx, exact_match_type = self._check_exact_match(first_name, last_name, company)
         
@@ -1646,7 +1636,7 @@ class EnhancedNameMatcher:
                 'candidate_idx': exact_match_idx,
                 'first_name': candidate['first_name'],
                 'last_name': candidate['last_name'],
-                'company': candidate['company'],
+                'company': self._standardize_company(company), #keep original company name
                 'scores': {
                     'composite': 1.0,
                     'exact_match': True,
@@ -1672,6 +1662,8 @@ class EnhancedNameMatcher:
         candidates = []
         for idx in candidate_indices:
             candidate = self._calculate_similarity_scores(first_name, last_name, company, idx)
+            #keep original company name
+            candidate['company'] = self._standardize_company(company)
             candidates.append(candidate)
         
         # Sort candidates by composite score
@@ -1707,7 +1699,8 @@ class EnhancedNameMatcher:
             'confidence': confidence,
             'top_candidates': top_candidates
         }
-    
+
+
     def correct_names_df(self, df, threshold=0.95, medium_threshold=0.80, batch_size=1000):
         """
         Correct names in a DataFrame against the distribution list.
@@ -1756,12 +1749,23 @@ class EnhancedNameMatcher:
                 last_name = row['last_name'] if pd.notna(row['last_name']) else ""
                 company = row['company'] if pd.notna(row['company']) else ""
                 
+                # Check if company is empty
+                if not company or str(company).strip() == "":
+                    # For empty company, preserve original values
+                    result_df.at[idx, 'corrected_first_name'] = first_name
+                    result_df.at[idx, 'corrected_last_name'] = last_name
+                    result_df.at[idx, 'corrected_company'] = company
+                    result_df.at[idx, 'match_confidence'] = 'no_match'
+                    result_df.at[idx, 'composite_score'] = 0.0
+                    result_df.at[idx, 'possible_name_swap'] = False
+                    continue
+                
                 match = self.match_name(first_name, last_name, company, threshold, medium_threshold)
                 
                 if match['best_match']:
                     result_df.at[idx, 'corrected_first_name'] = match['best_match']['first_name']
                     result_df.at[idx, 'corrected_last_name'] = match['best_match']['last_name']
-                    result_df.at[idx, 'corrected_company'] = match['best_match']['company']
+                    result_df.at[idx, 'corrected_company'] = self._standardize_company(company) #keep original company
                     result_df.at[idx, 'match_confidence'] = match['confidence']
                     result_df.at[idx, 'composite_score'] = match['best_match']['scores']['composite']
                     result_df.at[idx, 'possible_name_swap'] = match['best_match']['scores'].get('possible_swap', False)
@@ -1773,7 +1777,7 @@ class EnhancedNameMatcher:
                     result_df.at[idx, 'match_confidence'] = 'no_match'
                     result_df.at[idx, 'composite_score'] = 0.0
                     result_df.at[idx, 'possible_name_swap'] = False
-        
+
         processing_time = time.time() - start_time
         logger.info(f"Processing completed in {processing_time:.2f} seconds")
         logger.info(f"Average time per record: {(processing_time / len(df)) * 1000:.2f} ms")
@@ -1786,20 +1790,22 @@ def main():
     
     # Get distribution list information
     print("=== Distribution List (Reference List) ===")
-    dist_list_path = "Agents_Gold_Source_Unique.xlsx"
+    dist_list_path = "Agents_Gold_Source_Unique-v1.xlsx"
     dist_first_name_col = "first_name"
     dist_last_name_col = "last_name"
     dist_company_col = "Company"
     
     # Get wholesaler agent list information
     print("\n=== Wholesaler Agent List (Names to Correct) ===")
-    input_path = "EDL-Wholesaler Gifts and Entertainment-1-1-25-3-18-25.xlsx"
+    # input_path = "EDL-Wholesaler Gifts and Entertainment-1-1-25-3-18-25.xlsx"
+    input_path = "EDL-Wholesaler Gifts and Entertainment-100.xlsx"
     input_first_name_col = "Attendee First Name"
     input_last_name_col = "Attendee Last Name"
     input_company_col = "Company"
     
     # Get output file path
-    output_path = "EDL-Wholesaler Gifts and Entertainment-1-1-25-3-18-25-model correction-v3.2.xlsx"
+    # output_path = "EDL-Wholesaler Gifts and Entertainment-1-1-25-3-18-25-model correction-v3.2.xlsx"
+    output_path = "EDL-Wholesaler Gifts and Entertainment-100-model correction-v3.2.xlsx"
     
     batch_size = 5000
     threshold = 0.95

@@ -4,3 +4,7 @@
 # Ignore CSV files
 *.csv
 .venv
+*_cache
+*.log
+*.txt
+*.ipynb

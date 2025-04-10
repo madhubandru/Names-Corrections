@@ -5,7 +5,98 @@ import re
 import os
 from datetime import datetime
 
-company_names_map = {
+# Common nickname mappings
+NICKNAME_MAP = {
+'abby': 'abigail',
+'al': 'albert',
+'alex': 'alexander',
+'andy': 'andrew',
+'ben': 'benjamin',
+'benny': 'benjamin',
+'beth': 'elizabeth',
+'betty': 'elizabeth',
+'bill': 'william',
+'bob': 'robert',
+'bobby': 'robert',
+'cathy': 'catherine',
+'charlie': 'charles',
+'chris': 'christopher',
+'chuck': 'charles',
+'dan': 'daniel',
+'danny': 'daniel',
+'dave': 'david',
+'deb': 'deborah',
+'debbie': 'deborah',
+'dick': 'richard',
+'don': 'donald',
+'donny': 'donald',
+'drew': 'andrew',
+'ed': 'edward',
+'eddie': 'edward',
+'fred': 'frederick',
+'freddy': 'frederick',
+'gail': 'abigail',
+'greg': 'gregory',
+'harry': 'harold',
+'jack': 'john',
+'jackie': 'john',
+'jeff': 'jeffrey',
+'jen': 'jennifer',
+'jenny': 'jennifer',
+'jess': 'jessica',
+'jessie': 'jessica',
+'jim': 'james',
+'jimmy': 'james',
+'joe': 'joseph',
+'joey': 'joseph',
+'kate': 'katherine',
+'kathy': 'katherine',
+'ken': 'kenneth',
+'kenny': 'kenneth',
+'kim': 'kimberly',
+'larry': 'lawrence',
+'liz': 'elizabeth',
+'maggie': 'margaret',
+'matt': 'matthew',
+'meg': 'margaret',
+'mike': 'michael',
+'nancy': 'ann',
+'nate': 'nathan',
+'nick': 'nicholas',
+'pam': 'pamela',
+'pat': 'patricia',
+'patty': 'patricia',
+'peggy': 'margaret',
+'ray': 'raymond',
+'rich': 'richard',
+'rick': 'richard',
+'rob': 'robert',
+'ron': 'ronald',
+'ronny': 'ronald',
+'sam': 'samuel',
+'sammy': 'samuel',
+'steve': 'stephen',
+'sue': 'susan',
+'suzy': 'susan',
+'ted': 'theodore',
+'tim': 'timothy',
+'timmy': 'timothy',
+'tom': 'thomas',
+'tommy': 'thomas',
+'tony': 'anthony',
+'val': 'valerie',
+'vic': 'victor',
+'vicky': 'victoria',
+'vince': 'vincent',
+'walt': 'walter',
+'will': 'william',
+'willy': 'william'
+}
+
+# Company mapping dictionary
+COMPANY_MAP = {
+    # Common abbreviations and variations
+
 '5th 3rd Bank Downtown Branch':'5/3rd',
 'Fifth Third':'5/3rd',
 'fifth thrid':'5/3rd',
@@ -241,7 +332,7 @@ company_names_map = {
 'Grove Point Investments LLC':'Grove Point',
 'Grovepoint':'Grove Point',
 'Grove Point Investments, LLC':'Grove Point Investments',
- 'H. Beck':'H Beck',
+'H. Beck':'H Beck',
 'Hbeck':'H Beck',
 'Haliday':'Halliday',
 'Hancock Whitney - MS':'Hancock Whitney',
@@ -277,6 +368,7 @@ company_names_map = {
 'J.P Morgan':'JP Morgan',
 'J.P. Morgan':'JP Morgan',
 'J.P. Morgan Securities, LLC':'JP Morgan',
+'J.P. Morgan Securities':'JP Morgan',
 'J.P.Morgan':'JP Morgan',
 'Jo morgan':'JP Morgan',
 'JP Morga':'JP Morgan',
@@ -417,7 +509,7 @@ company_names_map = {
 'Osaic Institutions, Inc.':'Osaic Institutions',
 'Osaic Wealth Inc.':'Osaic Wealth',
 'Osaic Wealth, Inc.':'Osaic Wealth',
- 'Pac Life':'Paclife',
+'Pac Life':'Paclife',
 'Palmer 11':'Palmer11',
 'Park Ave':'Park Ave Securities',
 'Park Avenue':'Park Ave Securities',
@@ -573,6 +665,39 @@ def clean_name(name):
     # Convert to lowercase and strip
     return name.lower().strip()
 
+def standardize_company(company):
+    """Standardize company name using COMPANY_MAP."""
+    if pd.isna(company) or company == "":
+        return ""
+    
+    company_str = str(company).strip()
+    
+    # Check if company exists in mapping (exact match)
+    if company_str in COMPANY_MAP:
+        return COMPANY_MAP[company_str]
+    
+    # Try case-insensitive match
+    company_lower = company_str.lower()
+    for key, value in COMPANY_MAP.items():
+        if key.lower() == company_lower:
+            return value
+    
+    return company_str
+
+
+def standardize_first_name(first_name):
+    """Standardize first name using NICKNAME_MAP."""
+    if pd.isna(first_name) or first_name == "":
+        return ""
+    
+    first_name_clean = clean_name(first_name)
+    
+    # Check if name exists in nickname mapping
+    if first_name_clean in NICKNAME_MAP:
+        return NICKNAME_MAP[first_name_clean]
+    
+    return first_name
+
 def find_best_match(name, reference_list, threshold=80):
     """Find the best match for a name in a reference list using fuzzy matching."""
     if not name or name == "":
@@ -633,45 +758,86 @@ def correct_names(input_file, gold_source_file, output_file=None):
     corrections = {
         'first_name': 0,
         'last_name': 0,
-        'company': 0,
-        'company_map': 0
+        'company': 0
     }
     
-    # First correct company names using the mapping dictionary
+    # Process each record
     for idx, row in input_df.iterrows():
-        # Check if the company name exists in the mapping
-        if row['Company'] in company_names_map:
-            corrected_company = company_names_map[row['Company']]
-            input_df.at[idx, 'Corrected Company'] = corrected_company
-            corrections['company_map'] += 1
-    
-    # Correct names using fuzzy matching
-    for idx, row in input_df.iterrows():
-        # First name correction
-        if row['clean_first_name']:
-            best_match = find_best_match(row['clean_first_name'], first_names_ref)
-            if best_match and best_match != row['clean_first_name']:
-                input_df.at[idx, 'Corrected First Name'] = first_name_dict.get(best_match, row['Attendee First Name'])
+        # Skip records with no company name
+        if pd.isna(row['Company']) or row['Company'] == "":
+            continue
+        
+        # Standardize company name using COMPANY_MAP
+        standardized_company = standardize_company(row['Company'])
+        input_df.at[idx, 'Corrected Company'] = standardized_company
+        if standardized_company != row['Company']:
+            corrections['company'] += 1
+        
+        # Standardize first name using NICKNAME_MAP
+        if not pd.isna(row['Attendee First Name']) and row['Attendee First Name'] != "":
+            standardized_first_name = standardize_first_name(row['Attendee First Name'])
+            input_df.at[idx, 'Corrected First Name'] = standardized_first_name
+            if standardized_first_name != row['Attendee First Name']:
                 corrections['first_name'] += 1
         
-        # Last name correction
-        if row['clean_last_name']:
-            best_match = find_best_match(row['clean_last_name'], last_names_ref)
-            if best_match and best_match != row['clean_last_name']:
-                input_df.at[idx, 'Corrected Last Name'] = last_name_dict.get(best_match, row['Attendee Last Name'])
-                corrections['last_name'] += 1
+        # Create a subset of gold_df with matching last name and company
+        last_name_clean = row['clean_last_name']
+        company_clean = clean_name(standardized_company)
         
-        # Company correction (only if not already corrected by mapping)
-        if row['Company'] not in company_names_map and row['clean_company']:
-            best_match = find_best_match(row['clean_company'], companies_ref)
-            if best_match and best_match != row['clean_company']:
-                input_df.at[idx, 'Corrected Company'] = company_dict.get(best_match, row['Company'])
-                corrections['company'] += 1
+        if last_name_clean and company_clean:
+            # Find records with matching last name and company
+            matching_records = gold_df[
+                (gold_df['clean_last_name'] == last_name_clean) & 
+                (gold_df['clean_company'] == company_clean)
+            ]
+            
+            # If we found matching records, use them to correct first name
+            if not matching_records.empty:
+                # Get the first name from the first matching record
+                correct_first_name = matching_records.iloc[0]['first_name']
+                current_first_name = input_df.at[idx, 'Corrected First Name']
+                
+                # Check if first name is blank or needs correction
+                if pd.isna(current_first_name) or current_first_name == "":
+                    # If first name is blank, use the one from matching record
+                    input_df.at[idx, 'Corrected First Name'] = correct_first_name
+                    corrections['first_name'] += 1
+                else:
+                    # Check if first 4 letters match
+                    current_clean = clean_name(current_first_name)
+                    correct_clean = clean_name(correct_first_name)
+                    
+                    if len(current_clean) >= 4 and len(correct_clean) >= 4:
+                        if current_clean[:4] != correct_clean[:4]:
+                            # Check if first 3 letters match
+                            if len(current_clean) >= 3 and len(correct_clean) >= 3:
+                                if current_clean[:3] != correct_clean[:3]:
+                                    # No match, keep the standardized first name
+                                    pass
+                                else:
+                                    # First 3 letters match, use correct name
+                                    input_df.at[idx, 'Corrected First Name'] = correct_first_name
+                                    corrections['first_name'] += 1
+                            else:
+                                # Names too short for 3-letter comparison, keep standardized
+                                pass
+                        else:
+                            # First 4 letters match, use correct name
+                            input_df.at[idx, 'Corrected First Name'] = correct_first_name
+                            corrections['first_name'] += 1
+                    elif len(current_clean) >= 3 and len(correct_clean) >= 3:
+                        # Names too short for 4-letter comparison, check 3 letters
+                        if current_clean[:3] == correct_clean[:3]:
+                            input_df.at[idx, 'Corrected First Name'] = correct_first_name
+                            corrections['first_name'] += 1
     
     # Generate output filename if not provided
     if output_file is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file = os.path.join(os.path.dirname(input_file), f"Corrected_Wholesaler_Data_{timestamp}.xlsx")
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = os.path.join(os.path.dirname(input_file), f"{output_file}_{timestamp}.xlsx")
     
     # Save the corrected data
     print(f"Saving corrected data to: {output_file}")
@@ -682,19 +848,21 @@ def correct_names(input_file, gold_source_file, output_file=None):
     print("\nCorrection Summary:")
     print(f"First Names Corrected: {corrections['first_name']}")
     print(f"Last Names Corrected: {corrections['last_name']}")
-    print(f"Companies Corrected via Mapping: {corrections['company_map']}")
-    print(f"Companies Corrected via Fuzzy Matching: {corrections['company']}")
+    print(f"Companies Corrected: {corrections['company']}")
     print(f"Total Records Processed: {len(input_df)}")
+    print(f"Records Skipped (No Company): {len(input_df[input_df['Company'].isna() | (input_df['Company'] == '')])}")
     
     return output_file
 
 def main():
     # Define file paths
-    input_file = r"c:\Users\mbandru2\OneDrive - DXC Production\Equitable\Names-Corrections\EDL-Wholesaler Gifts and Entertainment-1-1-25-3-18-25.xlsx"
-    gold_source_file = r"c:\Users\mbandru2\OneDrive - DXC Production\Equitable\Names-Corrections\Agents_Gold_Source_Unique.xlsx"
+    input_file = "EDL-Wholesaler Gifts and Entertainment-1-1-25-3-18-25.xlsx"
+    gold_source_file = "Agents_Gold_Source_Unique-v1.xlsx"
+    output_file = input_file.split(".")[0]
+
     
     # Run the correction process
-    output_file = correct_names(input_file, gold_source_file)
+    output_file = correct_names(input_file, gold_source_file, output_file)
     print(f"\nProcess completed successfully. Corrected file saved at: {output_file}")
 
 if __name__ == "__main__":
